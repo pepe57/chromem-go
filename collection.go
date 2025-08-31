@@ -305,31 +305,46 @@ func (c *Collection) ListIDs(_ context.Context) []string {
 	return ids
 }
 
-// ListDocuments returns all documents in the collection.
-func (c *Collection) ListDocuments(_ context.Context) ([]Document, error) {
+// ListDocuments returns all documents in the collection. The returned documents
+// are a deep copy of the original ones, so you can modify them without affecting
+// the collection.
+func (c *Collection) ListDocuments(_ context.Context) ([]*Document, error) {
 	c.documentsLock.RLock()
 	defer c.documentsLock.RUnlock()
 
-	results := make([]Document, 0, len(c.documents))
+	results := make([]*Document, 0, len(c.documents))
 	for _, doc := range c.documents {
-		// Clone the document to avoid concurrent modification by reading goroutine
-		docCopy := cloneDocument(doc)
+		docCopy := cloneDocument(doc) // Deep copy
 		results = append(results, docCopy)
 	}
 	return results, nil
 }
 
-// ListDocumentsShort performs a shallow fetch on all documents in the collection,
-// returning only the document IDs and content, but not the embedding or metadata values.
-func (c *Collection) ListDocumentsShort(_ context.Context) ([]Document, error) {
+// ListDocumentsShallow returns all documents in the collection. The returned documents'
+// metadata and embeddings point to the original data, so modifying them will be
+// reflected in the collection.
+func (c *Collection) ListDocumentsShallow(_ context.Context) ([]*Document, error) {
 	c.documentsLock.RLock()
 	defer c.documentsLock.RUnlock()
 
-	results := make([]Document, 0, len(c.documents))
+	results := make([]*Document, 0, len(c.documents))
 	for _, doc := range c.documents {
-		// Clone the document to avoid concurrent modification by reading goroutine
-		docCopy := cloneDocumentShort(doc)
-		results = append(results, docCopy)
+		docCopy := *doc // Shallow copy
+		results = append(results, &docCopy)
+	}
+	return results, nil
+}
+
+// ListDocumentsPartial returns a partial version of all documents in the collection,
+// containing only the ID and content, but not the embedding or metadata values.
+func (c *Collection) ListDocumentsPartial(_ context.Context) ([]*Document, error) {
+	c.documentsLock.RLock()
+	defer c.documentsLock.RUnlock()
+
+	results := make([]*Document, 0, len(c.documents))
+	for _, doc := range c.documents {
+		partialDoc := makePartialDocument(doc) // Shallow copy
+		results = append(results, partialDoc)
 	}
 	return results, nil
 }
@@ -347,23 +362,23 @@ func (c *Collection) GetByID(_ context.Context, id string) (Document, error) {
 
 	doc, ok := c.documents[id]
 	if ok {
-		// Clone the document to avoid concurrent modification by reading goroutine
 		res := cloneDocument(doc)
-		return res, nil
+		return *res, nil
 	}
 
 	return Document{}, fmt.Errorf("document with ID '%v' not found", id)
 }
 
-// GetByMetadata returns a set of documents by their metadata.
-// The metadata tags must match the params specified in the where argument in both key and value
-// The returned documents are a copy of the original document, so they can be safely
-// modified without affecting the collection.
-func (c *Collection) GetByMetadata(_ context.Context, where map[string]string) ([]Document, error) {
+// GetByMetadata returns a set of documents, filtered by their metadata.
+// The metadata tags must match the params specified in the where argument in both
+// key and value.
+// The returned documents are a deep copy of the original document, so they can
+// be safely modified without affecting the collection.
+func (c *Collection) GetByMetadata(_ context.Context, where map[string]string) ([]*Document, error) {
 	c.documentsLock.RLock()
 	defer c.documentsLock.RUnlock()
 
-	var results []Document
+	var results []*Document
 	for _, doc := range c.documents {
 		match := true
 		for key, value := range where {
@@ -373,8 +388,7 @@ func (c *Collection) GetByMetadata(_ context.Context, where map[string]string) (
 			}
 		}
 		if match {
-			// Clone the document to avoid concurrent modification by reading goroutine
-			docCopy := cloneDocument(doc)
+			docCopy := cloneDocument(doc) // Deep copy
 			results = append(results, docCopy)
 		}
 	}
@@ -644,17 +658,17 @@ func (c *Collection) persistMetadata() error {
 }
 
 // cloneDocument creates a deep copy of the given Document, including its Metadata and Embedding slices.
-func cloneDocument(doc *Document) Document {
+func cloneDocument(doc *Document) *Document {
 	docCopy := *doc
 	docCopy.Metadata = maps.Clone(doc.Metadata)
 	docCopy.Embedding = slices.Clone(doc.Embedding)
-	return docCopy
+	return &docCopy
 }
 
-// cloneDocumentShort creates a shallow copy of the given Document without its Metadata and Embedding slices.
-func cloneDocumentShort(doc *Document) Document {
+// makePartialDocument creates a copy of the given Document without its Metadata and Embedding slices.
+func makePartialDocument(doc *Document) *Document {
 	docCopy := *doc
 	docCopy.Metadata = nil
 	docCopy.Embedding = nil
-	return docCopy
+	return &docCopy
 }
